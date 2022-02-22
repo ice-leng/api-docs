@@ -102,18 +102,20 @@ class SwaggerJson
         $makeParameters = new GenerateParameters($route, $method, $className, $methodName, $apiHeaderArr, $apiFormDataArr);
         $makeResponses = new GenerateResponses($className, $methodName, $apiResponseArr, $this->config->get('api_docs'));
         self::$swagger['paths'][$route]['position'] = $position;
+
+	    $parameters = $makeParameters->generate();
         self::$swagger['paths'][$route][$method] = [
             'tags' => $tags,
             'summary' => $apiOperation->summary ?? '',
             'description' => $apiOperation->description ?? '',
             'deprecated' => $isDeprecated,
             'operationId' => implode('', array_map('ucfirst', explode('/', $route))) . $methods,
-            'parameters' => $makeParameters->generate(),
+            'parameters' => $parameters,
             'produces' => [
                 'application/json',
             ],
             'responses' => $makeResponses->generate(),
-            'security' => $this->securityMethod(),
+            'security' => $this->securityMethod($parameters),
         ];
     }
 
@@ -190,11 +192,12 @@ class SwaggerJson
             return;
         }
         $securityDefinitions = [];
-        foreach ($securityKeyArr as $value) {
+        foreach ($securityKeyArr as $in => $value) {
+            $in = is_int($in) ? 'header' : $in;
             $securityDefinitions[$value] = [
                 'type' => 'apiKey',
                 'name' => $value,
-                'in' => 'header',
+                'in'   => $in,
             ];
         }
         self::$swagger['securityDefinitions'] = $securityDefinitions;
@@ -203,17 +206,29 @@ class SwaggerJson
     /**
      * security_api_key.
      */
-    private function securityMethod(): array
+    private function securityMethod(array $parameters): array
     {
         $securityKeyArr = $this->config->get('api_docs.security_api_key', []);
         if (empty($securityKeyArr)) {
             return [];
         }
-        $security = [];
-        foreach ($securityKeyArr as $value) {
-            $security[] = [
-                $value => [],
-            ];
+        $security = $securityKeys = [];
+        foreach ($parameters as $parameter) {
+            if ($parameter['in'] === 'header') {
+                $securityKeys['header'][] = $parameter['name'];
+            }
+            if ($parameter['in'] === 'query') {
+                $securityKeys['query'][] = $parameter['name'];
+            }
+        }
+        foreach ($securityKeyArr as $in => $value) {
+            $in = is_int($in) ? 'header' : $in;
+            $securityKey = $securityKeys[$in] ?? [];
+            if (in_array($value, $securityKey)) {
+                $security[] = [
+                    $value => [],
+                ];
+            }
         }
         return $security;
     }

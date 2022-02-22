@@ -7,6 +7,8 @@ return [
     'output_dir' => BASE_PATH . '/runtime/swagger',
     'prefix_url' => env('API_DOCS_PREFIX_URL', '/swagger'),
     //认证api key
+    // type ege: header, query, cookie
+//    'security_api_key' => ['Authorization', 'query' => 'token'],
     'security_api_key' => ['Authorization'],
     //替换验证属性
     'validation_custom_attributes' => false,

@@ -10,9 +10,12 @@ use Hyperf\Di\ReflectionManager;
 use Hyperf\DTO\Annotation\Validation\In;
 use Hyperf\DTO\Annotation\Validation\Required;
 use Hyperf\DTO\ApiAnnotation;
+use Hyperf\DTO\Scan\Property;
 use Hyperf\DTO\Scan\PropertyManager;
 use Hyperf\Utils\ApplicationContext;
+use MabeEnum\Enum;
 use ReflectionProperty;
+use stdClass;
 use Throwable;
 
 class SwaggerCommon
@@ -20,6 +23,11 @@ class SwaggerCommon
     public function getDefinitions(string $className): string
     {
         return '#/definitions/' . $this->getSimpleClassName($className);
+    }
+
+    protected function getDefinition(string $className): array
+    {
+        return SwaggerJson::$swagger['definitions'][$this->getSimpleClassName($className)] ?? [];
     }
 
     public function getSimpleClassName(string $className): string
@@ -31,7 +39,7 @@ class SwaggerCommon
     {
         $parameters = [];
         $rc = ReflectionManager::reflectClass($parameterClassName);
-        foreach ($rc->getProperties() ?? [] as $reflectionProperty) {
+        foreach ($rc->getProperties(ReflectionProperty::IS_PUBLIC) ?? [] as $reflectionProperty) {
             $property = [];
             $property['in'] = $in;
             $property['name'] = $reflectionProperty->getName();
@@ -104,6 +112,16 @@ class SwaggerCommon
         };
     }
 
+    protected function getPropertyByValue($value): Property
+    {
+        $property = new Property();
+        $property->isSimpleType = true;
+        $type = $this->getType2SwaggerType(gettype($value));
+        $property->type = $type;
+        $property->className = $type;
+        return $property;
+    }
+
     public function generateClass2schema(string $className): void
     {
         if (! ApplicationContext::getContainer()->has($className)) {
@@ -122,9 +140,16 @@ class SwaggerCommon
             'properties' => [],
         ];
         $rc = ReflectionManager::reflectClass($className);
-        foreach ($rc->getProperties() ?? [] as $reflectionProperty) {
+        foreach ($rc->getProperties(ReflectionProperty::IS_PUBLIC) ?? [] as $reflectionProperty) {
             $fieldName = $reflectionProperty->getName();
             $propertyClass = PropertyManager::getProperty($className, $fieldName);
+            if (!$propertyClass->isSimpleType) {
+                $construct = ReflectionManager::reflectClass($propertyClass->className)->getConstructor();
+                if ($construct && $construct->class === Enum::class) {
+                    $propertyClass = $this->getPropertyByValue(current($propertyClass->className::getValues()));
+                }
+            }
+
             $phpType = $propertyClass->type;
             $type = $this->getType2SwaggerType($phpType);
             $apiModelProperty = ApiAnnotation::getProperty($className, $fieldName, ApiModelProperty::class);
@@ -167,9 +192,18 @@ class SwaggerCommon
             }
             if (! $propertyClass->isSimpleType && $phpType != 'array' && class_exists($propertyClass->className)) {
                 $this->generateClass2schema($propertyClass->className);
-                $property['$ref'] = $this->getDefinitions($propertyClass->className);
+                if (!empty($property['description'])) {
+                    $definition = $this->getDefinition($propertyClass->className);
+                    $definition['description'] = $property['description'];
+                    SwaggerJson::$swagger['definitions'][$this->getSimpleClassName($propertyClass->className)] = $definition;
+                }
+                $property = ['$ref' => $this->getDefinitions($propertyClass->className)];
             }
             $schema['properties'][$fieldName] = $property;
+        }
+
+	    if (empty($schema['properties'])) {
+            $schema['properties'] = new stdClass();
         }
         SwaggerJson::$swagger['definitions'][$this->getSimpleClassName($className)] = $schema;
     }
@@ -187,7 +221,7 @@ class SwaggerCommon
     {
         $schema = [
             'type' => 'object',
-            'properties' => [],
+            'properties' => new stdClass(),
         ];
         SwaggerJson::$swagger['definitions'][$this->getSimpleClassName($className)] = $schema;
     }

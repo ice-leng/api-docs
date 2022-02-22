@@ -10,6 +10,7 @@ use Hyperf\Di\ReflectionType;
 use Hyperf\DTO\Scan\ScanAnnotation;
 use Hyperf\Utils\ApplicationContext;
 use Psr\Container\ContainerInterface;
+use stdClass;
 
 class GenerateResponses
 {
@@ -57,10 +58,10 @@ class GenerateResponses
         if ($this->common->isSimpleType($returnTypeClassName)) {
             $type = $this->common->getType2SwaggerType($returnTypeClassName);
             if ($type == 'array') {
-                $schema['schema']['items'] = (object) [];
+                $schema['schema']['items'] = new stdClass();
             }
             if ($type == 'object') {
-                $schema['schema']['items'] = (object) [];
+                $schema['schema']['items'] = new stdClass();
             }
             $schema['schema']['type'] = $type;
         } elseif ($this->container->has($returnTypeClassName)) {
