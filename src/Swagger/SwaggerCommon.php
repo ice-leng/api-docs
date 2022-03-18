@@ -10,10 +10,11 @@ use Hyperf\Di\ReflectionManager;
 use Hyperf\DTO\Annotation\Validation\In;
 use Hyperf\DTO\Annotation\Validation\Required;
 use Hyperf\DTO\ApiAnnotation;
-use Hyperf\DTO\Scan\Property;
 use Hyperf\DTO\Scan\PropertyManager;
 use Hyperf\Utils\ApplicationContext;
+use Lengbin\ErrorCode\Annotation\EnumView;
 use MabeEnum\Enum;
+use phpDocumentor\Reflection\DocBlockFactory;
 use ReflectionProperty;
 use stdClass;
 use Throwable;
@@ -49,7 +50,7 @@ class SwaggerCommon
             }
             $phpType = $this->getTypeName($reflectionProperty);
             $property['type'] = $this->getType2SwaggerType($phpType);
-            if (! in_array($phpType, ['integer', 'int', 'boolean', 'bool', 'string', 'double', 'float'])) {
+            if (!in_array($phpType, ['integer', 'int', 'boolean', 'bool', 'string', 'double', 'float'])) {
                 continue;
             }
 
@@ -61,7 +62,7 @@ class SwaggerCommon
             if ($apiModelProperty->hidden) {
                 continue;
             }
-            if (! empty($inAnnotation)) {
+            if (!empty($inAnnotation)) {
                 $property['enum'] = $inAnnotation->getValue();
             }
             if ($apiModelProperty->required !== null) {
@@ -112,9 +113,73 @@ class SwaggerCommon
         };
     }
 
+    protected function handleEnum($factory, $reflectionProperty, $propertyClass)
+    {
+        $property = [];
+        $phpType = $propertyClass->type;
+
+        $flags = EnumView::ENUM_VALUE;
+        if (version_compare(PHP_VERSION, '8.0.0', '>')) {
+            $enumViews = $reflectionProperty->getAttributes(EnumView::class);
+            if (!empty($enumViews)) {
+                $flags = $enumViews[0]->newInstance()->flags;
+            }
+        }
+        if (empty($enumViews)) {
+            $enumViews = $factory->create($reflectionProperty->getDocComment())->getTagsByName('EnumView');
+            if (!empty($enumViews)) {
+                $flags = EnumView::ENUM_ALL;
+            }
+        }
+        $property['type'] = 'array';
+        if ($flags == EnumView::ENUM_ALL) {
+            $type = 'object';
+            $values = $propertyClass->className::getValues();
+            $messages = $propertyClass->className::getMessages();
+            $properties = [
+                'value'   => [
+                    'type' => $this->getType2SwaggerType(gettype(current($values))),
+                    'enum' => $values,
+                ],
+                'message' => [
+                    'type' => $this->getType2SwaggerType(gettype(current($messages))),
+                    'enum' => $messages,
+                ],
+            ];
+            if ($phpType === 'array') {
+                $property['items']['type'] = $type;
+                $property['items']['properties'] = $properties;
+            } else {
+                $property['type'] = $type;
+                $property['properties'] = $properties;
+            }
+        } else {
+            $values = [];
+            if ($flags === EnumView::ENUM_VALUE) {
+                $values = $propertyClass->className::getValues();
+            }
+            if ($flags === EnumView::ENUM_NAME) {
+                $values = $propertyClass->className::getNames();
+            }
+            if ($flags === EnumView::ENUM_MESSAGE) {
+                $values = $propertyClass->className::getMessages();
+            }
+            $type = $this->getType2SwaggerType(gettype(current($values)));
+            if ($phpType === 'array') {
+                $property['items']['enum'] = $values;
+                $property['items']['type'] = $type;
+            } else {
+                $property['enum'] = $values;
+                $property['type'] = $type;
+            }
+        }
+
+        return $property;
+    }
+
     public function generateClass2schema(string $className): void
     {
-        if (! ApplicationContext::getContainer()->has($className)) {
+        if (!ApplicationContext::getContainer()->has($className)) {
             $this->generateEmptySchema($className);
             return;
         }
@@ -126,10 +191,11 @@ class SwaggerCommon
         }
 
         $schema = [
-            'type' => 'object',
+            'type'       => 'object',
             'properties' => [],
         ];
         $rc = ReflectionManager::reflectClass($className);
+        $factory = DocBlockFactory::createInstance();
         foreach ($rc->getProperties(ReflectionProperty::IS_PUBLIC) ?? [] as $reflectionProperty) {
             $fieldName = $reflectionProperty->getName();
             $propertyClass = PropertyManager::getProperty($className, $fieldName);
@@ -144,9 +210,11 @@ class SwaggerCommon
             if ($apiModelProperty->hidden) {
                 continue;
             }
+
             $property = [];
+
             $property['type'] = $type;
-            if (! empty($inAnnotation)) {
+            if (!empty($inAnnotation)) {
                 $property['enum'] = $inAnnotation->getValue();
             }
             $property['description'] = $apiModelProperty->value ?? '';
@@ -161,7 +229,7 @@ class SwaggerCommon
             }
             if ($phpType == 'array') {
                 if ($propertyClass->className == null) {
-                    $property['items'] = (object) [];
+                    $property['items'] = (object)[];
                 } else {
                     if ($propertyClass->isSimpleType) {
                         $property['items']['type'] = $this->getType2SwaggerType($propertyClass->className);
@@ -172,9 +240,9 @@ class SwaggerCommon
                 }
             }
             if ($type == 'object') {
-                $property['items'] = (object) [];
+                $property['items'] = (object)[];
             }
-            if (! $propertyClass->isSimpleType && $phpType != 'array' && class_exists($propertyClass->className)) {
+            if (!$propertyClass->isSimpleType && $phpType != 'array' && class_exists($propertyClass->className)) {
                 $this->generateClass2schema($propertyClass->className);
                 if (!empty($property['description'])) {
                     $definition = $this->getDefinition($propertyClass->className);
@@ -183,10 +251,15 @@ class SwaggerCommon
                 }
                 $property = ['$ref' => $this->getDefinitions($propertyClass->className)];
             }
+
+            if (is_subclass_of($propertyClass->className, Enum::class)) {
+                $property = $this->handleEnum($factory, $reflectionProperty, $propertyClass);
+            }
+
             $schema['properties'][$fieldName] = $property;
         }
 
-	    if (empty($schema['properties'])) {
+        if (empty($schema['properties'])) {
             $schema['properties'] = new stdClass();
         }
         SwaggerJson::$swagger['definitions'][$this->getSimpleClassName($className)] = $schema;
@@ -194,17 +267,13 @@ class SwaggerCommon
 
     public function isSimpleType($type): bool
     {
-        return $type == 'string'
-            || $type == 'boolean' || $type == 'bool'
-            || $type == 'integer' || $type == 'int'
-            || $type == 'double' || $type == 'float'
-            || $type == 'array' || $type == 'object';
+        return $type == 'string' || $type == 'boolean' || $type == 'bool' || $type == 'integer' || $type == 'int' || $type == 'double' || $type == 'float' || $type == 'array' || $type == 'object';
     }
 
     protected function generateEmptySchema(string $className)
     {
         $schema = [
-            'type' => 'object',
+            'type'       => 'object',
             'properties' => new stdClass(),
         ];
         SwaggerJson::$swagger['definitions'][$this->getSimpleClassName($className)] = $schema;
