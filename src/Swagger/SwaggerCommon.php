@@ -12,7 +12,8 @@ use Hyperf\DTO\Annotation\Validation\Required;
 use Hyperf\DTO\ApiAnnotation;
 use Hyperf\DTO\Scan\PropertyManager;
 use Hyperf\Utils\ApplicationContext;
-use Lengbin\ErrorCode\Annotation\EnumView;
+use Lengbin\Common\Annotation\ArrayType;
+use Lengbin\Common\Annotation\EnumView;
 use MabeEnum\Enum;
 use phpDocumentor\Reflection\DocBlockFactory;
 use ReflectionProperty;
@@ -113,22 +114,25 @@ class SwaggerCommon
         };
     }
 
-    protected function handleEnum($factory, $reflectionProperty, $propertyClass)
+    protected function handleEnum($factory, $reflectionProperty, $propertyClass, $isPhp8)
     {
         $property = [];
         $phpType = $propertyClass->type;
 
         $flags = EnumView::ENUM_VALUE;
-        if (version_compare(PHP_VERSION, '8.0.0', '>')) {
+        if ($isPhp8) {
             $enumViews = $reflectionProperty->getAttributes(EnumView::class);
             if (!empty($enumViews)) {
                 $flags = $enumViews[0]->newInstance()->flags;
             }
         }
         if (empty($enumViews)) {
-            $enumViews = $factory->create($reflectionProperty->getDocComment())->getTagsByName('EnumView');
-            if (!empty($enumViews)) {
-                $flags = EnumView::ENUM_ALL;
+            $docComment = $reflectionProperty->getDocComment();
+            if ($docComment) {
+                $enumViews = $factory->create($reflectionProperty->getDocComment())->getTagsByName('EnumView');
+                if (!empty($enumViews)) {
+                    $flags = EnumView::ENUM_ALL;
+                }
             }
         }
         $property['type'] = 'array';
@@ -196,6 +200,7 @@ class SwaggerCommon
         ];
         $rc = ReflectionManager::reflectClass($className);
         $factory = DocBlockFactory::createInstance();
+        $isPhp8 = version_compare(PHP_VERSION, '8.0.0', '>');
         foreach ($rc->getProperties(ReflectionProperty::IS_PUBLIC) ?? [] as $reflectionProperty) {
             $fieldName = $reflectionProperty->getName();
             $propertyClass = PropertyManager::getProperty($className, $fieldName);
@@ -228,6 +233,16 @@ class SwaggerCommon
                 $property['default'] = $reflectionProperty->getValue($obj);
             }
             if ($phpType == 'array') {
+                if ($isPhp8) {
+                    $arrayTypes = $reflectionProperty->getAttributes(ArrayType::class);
+                    if (!empty($arrayTypes)) {
+                        $arrayType = $arrayTypes[0]->newInstance();
+                        $propertyClass->className = $arrayType->type;
+                        if ($arrayType->className) {
+                            $propertyClass->className = $arrayType->className;
+                        }
+                    }
+                }
                 if ($propertyClass->className == null) {
                     $property['items'] = (object)[];
                 } else {
@@ -253,7 +268,7 @@ class SwaggerCommon
             }
 
             if (is_subclass_of($propertyClass->className, Enum::class)) {
-                $property = $this->handleEnum($factory, $reflectionProperty, $propertyClass);
+                $property = $this->handleEnum($factory, $reflectionProperty, $propertyClass, $isPhp8);
             }
 
             $schema['properties'][$fieldName] = $property;
