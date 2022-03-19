@@ -7,6 +7,7 @@ namespace Hyperf\ApiDocs\Swagger;
 use Hyperf\ApiDocs\Annotation\ApiResponse;
 use Hyperf\Di\MethodDefinitionCollectorInterface;
 use Hyperf\Di\ReflectionType;
+use Hyperf\DTO\Entity\CommonResponse;
 use Hyperf\DTO\Scan\ScanAnnotation;
 use Hyperf\Utils\ApplicationContext;
 use Psr\Container\ContainerInterface;
@@ -44,9 +45,32 @@ class GenerateResponses
         /** @var ReflectionType $definitions */
         $definition = $this->methodDefinitionCollector->getReturnType($this->className, $this->methodName);
         $returnTypeClassName = $definition->getName();
+        $returnSchema = $this->getSchema($returnTypeClassName);
+        if (!empty($returnSchema)) {
+            $returnSchema = [
+                'schema' => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'code' => [
+                            'type'        => 'string',
+                            'description' => '错误码',
+                            'example'     => "0",
+                        ],
+                        'msg'  => [
+                            'type'        => 'string',
+                            'description' => '错误信息',
+                            'example'     => '',
+                        ],
+                        'data' => $returnSchema['schema'],
+                    ],
+                ],
+            ];
+        }
+
         $code = $this->config['responses_code'] ?? 200;
-        $resp[$code] = $this->getSchema($returnTypeClassName);
+        $resp[$code] = $returnSchema;
         $resp[$code]['description'] = 'OK';
+
         $globalResp = $this->getGlobalResp();
         $AnnotationResp = $this->getAnnotationResp();
         return $AnnotationResp + $resp + $globalResp;
@@ -90,7 +114,7 @@ class GenerateResponses
                 $scanAnnotation = $this->container->get(ScanAnnotation::class);
                 $scanAnnotation->scanClass($apiResponse->className);
                 $this->getSchema($apiResponse->className);
-                if (! empty($apiResponse->type)) {
+                if (!empty($apiResponse->type)) {
                     $schema['schema']['type'] = $apiResponse->type;
                     $schema['schema']['items']['$ref'] = $this->getSchema($apiResponse->className)['schema']['$ref'];
                     $resp[$apiResponse->code] = $schema;
