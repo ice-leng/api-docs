@@ -114,9 +114,9 @@ class SwaggerCommon
         };
     }
 
-    protected function handleEnum($factory, $reflectionProperty, $propertyClass, $isPhp8)
+    protected function handleEnum($factory, $reflectionProperty, $propertyClass, $isPhp8, $property)
     {
-        $property = [];
+
         $phpType = $propertyClass->type;
 
         $flags = EnumView::ENUM_VALUE;
@@ -177,7 +177,8 @@ class SwaggerCommon
                 $property['type'] = $type;
             }
         }
-
+        unset($property['$ref']);
+        unset($property['items']['$ref']);
         return $property;
     }
 
@@ -217,6 +218,7 @@ class SwaggerCommon
             }
 
             $property = [];
+            $isEnum = is_subclass_of($propertyClass->className, Enum::class);
 
             $property['type'] = $type;
             if (!empty($inAnnotation)) {
@@ -249,15 +251,17 @@ class SwaggerCommon
                     if ($propertyClass->isSimpleType) {
                         $property['items']['type'] = $this->getType2SwaggerType($propertyClass->className);
                     } else {
-                        $this->generateClass2schema($propertyClass->className);
-                        $property['items']['$ref'] = $this->getDefinitions($propertyClass->className);
+                        if (!$isEnum) {
+                            $this->generateClass2schema($propertyClass->className);
+                            $property['items']['$ref'] = $this->getDefinitions($propertyClass->className);
+                        }
                     }
                 }
             }
             if ($type == 'object') {
                 $property['items'] = (object)[];
             }
-            if (!$propertyClass->isSimpleType && $phpType != 'array' && class_exists($propertyClass->className)) {
+            if (!$propertyClass->isSimpleType && $phpType != 'array' && class_exists($propertyClass->className) && !$isEnum) {
                 $this->generateClass2schema($propertyClass->className);
                 if (!empty($property['description'])) {
                     $definition = $this->getDefinition($propertyClass->className);
@@ -267,8 +271,8 @@ class SwaggerCommon
                 $property = ['$ref' => $this->getDefinitions($propertyClass->className)];
             }
 
-            if (is_subclass_of($propertyClass->className, Enum::class)) {
-                $property = $this->handleEnum($factory, $reflectionProperty, $propertyClass, $isPhp8);
+            if ($isEnum) {
+                $property = $this->handleEnum($factory, $reflectionProperty, $propertyClass, $isPhp8, $property);
             }
 
             $schema['properties'][$fieldName] = $property;
